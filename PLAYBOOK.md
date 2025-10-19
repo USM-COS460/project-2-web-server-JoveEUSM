@@ -1,9 +1,9 @@
 ## COS 460/540 - Computer Networks
 # Project 2: HTTP Server
 
-# <<YOUR NAME>>
+# Jove Emmons
 
-This project is written in <<LAUNGUAGE USED>> on <<OPERATING SYSTEM>>.
+This project is written in C on Linux.
 
 ## How to compile
 
