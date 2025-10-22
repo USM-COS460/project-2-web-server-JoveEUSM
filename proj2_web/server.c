@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-
+#include <signal.h>
 
 
 /*
@@ -60,11 +60,17 @@ char* requestParser(char* request,int clientFD);
 
 
 char* docRoot;
+char* serverName;
 
 int main(int argc,char* argv[]){
-    docRoot = malloc(4096);
-    memset(docRoot,0,4096);
+    signal(13,SIG_IGN);
 
+
+    docRoot = malloc(4096);
+    serverName = malloc(255);
+    memset(docRoot,0,4096);
+    memset(serverName,0,255);
+    strcpy(serverName,argv[0]);
 
     if(argc!=3){
         printf("Improper number of arguments passed. Please pass the wanted port number and path to document file directory.\n");
@@ -266,40 +272,50 @@ char* requestParser(char* request,int clientFD){
     memset(copy,0,2048);
     memset(URI,0,512);
     strcpy(copy,request);
-    char* code = malloc(3);
-    strcpy(code,"200");
 
+    char* tok = malloc(2048);
+    memset(tok,0,2048);
 
-    char* tok = strtok(copy," ");
-    int tokCounter = 0;
+    if(tok = strtok(copy," ") == NULL){
+        responseMaker("405\0",URI,clientFD);
+    }
     if(strcmp(tok,"\r\nGET")!=0 & strcmp(tok,"GET")!=0){
         printf("GET request not found: %s instead\n",tok);
-        //handle improper request here somehow. maybe call func with codes for improper reason
-        strcpy(code,"405");
+        responseMaker("405\0",URI,clientFD);
     }
-    tok = strtok(NULL," ");
+
+    if(tok = strtok(NULL," ") == NULL){
+        responseMaker("405\0",URI,clientFD);
+    }
     strcpy(URI,tok);    //the requested resource
-    tok = strtok(NULL," ");
+
+
+    if(tok = strtok(NULL," ") == NULL){
+        responseMaker("405\0",URI,clientFD);
+    }
     if(strstr(tok,"HTTP/1.")==NULL){
         //case for http part of request header missing
         printf("No HTTP 1.x ver found in request-line: %s instead\n",tok);
-        strcpy(code,"505");
+        responseMaker("505\0",URI,clientFD);
     }
 
     char* path = malloc(4610);
+    memset(path,0,4610);
+    strcpy(path,docRoot);
+    strcat(path,URI);
+    //make path here
 
     struct stat reqFile;
     memset(&reqFile,0,sizeof reqFile);
     if(stat(path,&reqFile)==-1){
         printf("Requested file not found: %s",strerror(errno));
-        strcpy(code,"404");
+        responseMaker("404\0",URI,clientFD);
     }
 
-    responseMaker(code,path,clientFD);
+    responseMaker("200\0",URI,clientFD);
 
     free(copy);
     free(URI);
-    free(code);
     return URI; //kill return? have null?
 }
 
@@ -320,19 +336,24 @@ implemented codes:
 404 - not found
     send date, server
 */
-void responseMaker(char* code,char* path,int clientFD){
-    char* httpVer = "HTTP/1.1 "; //9 bytes
+void responseMaker(char* code,char* URI,int clientFD){
+    char* httpVer = "HTTP/1.1 \0"; //9 bytes
     int statusCode = code;  //always 3 chars, so 3 bytes
     char* reasonPhrase = malloc(32);
+
+    
+
+
+
     memset(reasonPhrase,0,32);
     if(strcmp(code,"405")==0){
-        strcpy(reasonPhrase," Method Not Allowed\r\n");
+        strcpy(reasonPhrase," Method Not Allowed\r\n\0");
     }else if(strcmp(code,"505")==0){
-        strcpy(reasonPhrase," HTTP Version not supported\r\n");
+        strcpy(reasonPhrase," HTTP Version not supported\r\n\0");
     }else if(strcmp(code,"404")==0){
-        strcpy(reasonPhrase," Not Found\r\n");
+        strcpy(reasonPhrase," Not Found\r\n\0");
     }else{
-        strcpy(reasonPhrase," OK\r\n");
+        strcpy(reasonPhrase," OK\r\n\0");
     }
 
     /*
@@ -343,7 +364,7 @@ void responseMaker(char* code,char* path,int clientFD){
 
     char* responseBuff = malloc(4096);
     memset(responseBuff,0,4096);
-    int fillSize = 0;
+    
 
     /*
     don't need to worry about extra / in filepath, fopen dgaf
@@ -388,13 +409,130 @@ void responseMaker(char* code,char* path,int clientFD){
     */
 
     //cat on server header here
+    char* serverHeader = malloc(266);   //255 servername + 8 "Server: " + 2 \r\n
+    memset(serverHeader,0,266);
+    strcpy(serverHeader,"Server: ");
+    strcat(serverHeader,serverName);
+    strcat(serverHeader,"\r\n\0");
+    strcat(responseBuff,serverHeader);  //server header is now added to responsebuff
+
+
+    strcat(responseBuff,dateHeaderMaker());
+    //have function for date header here
 
     //check code here
+
+    //all will go in with last added chars as \r\n i.e. newline
     if(strcmp(code,"404")==0){  //if 404 bad uri
+        //DONE
+        strcat(responseBuff,"\r\n\0");
+        send(clientFD,responseBuff,strlen(responseBuff),0);
+
+    }else if(strcmp(code,"405")==0){    //if 405 method not allowed
+        //DONE
+        strcat(responseBuff,"Allow: GET\r\n\0");
+        strcat(responseBuff,"\r\n\0");
+        send(clientFD,responseBuff,strlen(responseBuff),0);
+
+    }else if(strcmp(code,"505")==0){    //if 505 http ver not supported
+        //DONE
+        strcat(responseBuff,"\r\n\0");
+        send(clientFD,responseBuff,strlen(responseBuff),0);
 
     }else if(strcmp(code,"200")==0){    //if ok
-        FILE* fp = fopen(path,"rb");
+
+        //use send flag MSG_MORE if not complete file
+
+
+
+
+        char* path = malloc(4610);
+        memset(path,0,4610);
+        strcpy(path,docRoot);
+        strcat(path,URI);
+        //make path here
         
+        //use strncpy and strcmp to check file type wanted, then decide file open mode
+        //for .html open normally, everything else do binary
+        char* fileExt = malloc(255);
+        memset(fileExt,0,255);
+
+        char* typeHeader = malloc(272);
+        memset(typeHeader,0,272);
+        strcpy(typeHeader,"Content-Type: \0");
+        //let mediatype be up to 255
+
+        char* lengthHeader = malloc(272);
+        memset(lengthHeader,0,272);
+        strcpy(lengthHeader,"Content-Length: \0");
+
+
+        FILE* fp;
+
+        if(strstr(URI,".")==NULL){//no . found in filename
+            //treat file as binary
+            
+            fp = fopen(path,"rb");
+            free(path);
+            strcat(typeHeader,mimeFinder(fileExt));
+            strcat(typeHeader,"\r\n\0");
+            strcat(responseBuff,typeHeader);    //type header added
+            
+        }else{
+            fileExt = strrchr(URI,'.') + 1;
+            //check if .html is requested
+            if(strcmp(fileExt,"html")==0){
+                //html was requested
+                free(fileExt);
+                fp = fopen(path,"r");
+                free(path);
+                strcat(typeHeader,"text/html\r\n\0");
+                strcat(responseBuff,typeHeader);    //type header added
+
+            }else{//.html not file type
+                //treat as binary
+                fp = fopen(path,"rb");
+                free(path);
+                strcat(typeHeader,mimeFinder(fileExt));
+                strcat(typeHeader,"\r\n\0");
+                strcat(responseBuff,typeHeader);    //type header added
+
+            }
+
+
+        }
+
+        fseek(fp,0,SEEK_END);
+        char* len = malloc(50);
+        memset(len,0,50);
+        int lenNum = ftell(fp);
+        sprintf(len,"%d\r\n\r\n\0",lenNum);
+        strcat(lengthHeader,len);
+        strcat(responseBuff,lengthHeader);  //length header added
+        free(lengthHeader);
+        free(len);
+        fseek(fp,0,SEEK_SET);
+        
+        if(lenNum==0){
+            send(clientFD,responseBuff,strlen(responseBuff),0);
+            fclose(fp);
+            return;
+        }
+        send(clientFD,responseBuff,strlen(responseBuff),MSG_MORE);
+        memset(responseBuff,0,4096);
+        int readLen = 0;
+        while(readLen = fread(responseBuff,1,4096,fp)!=0){
+            if(readLen<4096){
+                send(clientFD,responseBuff,strlen(responseBuff),0);
+                fclose(fp);
+                return;
+            }
+            send(clientFD,responseBuff,strlen(responseBuff),MSG_MORE);
+            memset(responseBuff,0,4096);
+        }
+        
+
+
         //put content type here
         //put content length here
         //to get file size, fseek to end, then do ftell, then fseek back to front
@@ -404,7 +542,7 @@ void responseMaker(char* code,char* path,int clientFD){
         //loop if needed
 
         //put below in loop. capture return val so it can be checked against -1 and 0
-        if(send(clientFD,responseBuff,fillSize,0)==-1){ //have this be blocking so the message body is at least sent in the right order
+        if(send(clientFD,responseBuff,strlen(responseBuff),0)==-1){ //have this be blocking so the message body is at least sent in the right order
             printf("Error in sending response: %s\n",strerror(errno));
         }
 
@@ -418,4 +556,69 @@ void responseMaker(char* code,char* path,int clientFD){
     
 
 
+}
+
+
+
+/*
+unfinished
+
+*/
+char* dateHeaderMaker(){
+
+    /*
+    time_t rawtime;
+    struct tm *info;
+    char* buff = malloc(80);
+
+    time(&rawtime);//current time
+
+    info = gmtime(&rawtime);//gm time
+    */
+   return "Date:\r\n\0";
+}
+
+
+/*
+    Gets the mime type for the given file extension
+
+
+    //buffer for fgets
+
+    //need fp for fgets, so use fopen
+    //do strstr for file extension
+    //then do strstr for \t
+    //then add 1
+    //if null at any point move on
+
+    //check for mime type here, cat that to typeHeader
+    */
+char* mimeFinder(char* fileExt){
+    char* buff = malloc(255);
+    memset(buff,0,255);
+    FILE* fp = fopen("mimeTypesExt.txt","r");
+
+    while(fgets(buff,255,fp)!=NULL){
+        //printf("pre1\n");
+        char* subBuff = strstr(buff,strcat(fileExt,"\t"));
+        //printf("post1\n");
+        if(subBuff){
+            //printf("pre2\n");
+            subBuff = strstr(subBuff,"\t");
+            //printf("post2\n");
+            if(subBuff){
+                //printf("pre3\n");
+                subBuff = subBuff + 1;
+                //printf("post3\n");
+                //printf("%s",subBuff);
+                return subBuff;
+            }
+        }
+
+        //printf("pre4\n");
+        memset(buff,0,255);
+        //printf("post4 / end\n");
+    }
+
+    return "application/octet-stream";
 }
