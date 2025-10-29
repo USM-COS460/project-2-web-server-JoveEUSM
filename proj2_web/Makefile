@@ -1,6 +1,0 @@
-.SUFFIXES:
-.SUFFIXES: .c .o
-
-
-server:
-	gcc -g server.c -o server
